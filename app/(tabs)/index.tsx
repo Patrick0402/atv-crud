@@ -1,80 +1,60 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { ScrollView, StyleSheet, View } from 'react-native';
 
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
+import { AppHeader } from '@/components/app-header';
+// buttons removed from Home quick actions
+import { Card } from '@/components/card';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
+import { formatCurrency } from '@/lib/format';
+import { subscribe } from '@/lib/pubsub';
+import { getTransactions } from '@/lib/transactions';
+import { Transaction } from '@/types/transaction';
+// Link not used on Home anymore
 
 export default function HomeScreen() {
-  return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
 
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+  async function load() {
+    const txs = await getTransactions();
+    setTransactions(txs);
+  }
+
+  useEffect(() => {
+    load();
+    const unsub = subscribe('transactions:changed', () => load());
+    return unsub;
+  }, []);
+
+  const balance = transactions.reduce((acc, t) => {
+    const sign = t.type === 'expense' ? -1 : 1;
+    return acc + sign * (t.amount || 0);
+  }, 0);
+
+  return (
+    <ThemedView style={{ flex: 1 }}>
+      <AppHeader title="Minha Carteira" />
+      <ScrollView contentContainerStyle={styles.container}>
+        <Card style={styles.balanceCard}>
+          <ThemedText type="subtitle">Saldo Disponível</ThemedText>
+          <ThemedText type="title">{formatCurrency(balance)}</ThemedText>
+        </Card>
+
+        <Card>
+          <ThemedText type="subtitle">Resumo</ThemedText>
+          {transactions.length === 0 ? (
+            <ThemedText>Nenhuma transação registrada.</ThemedText>
+          ) : (
+            transactions.slice(0, 5).map((t) => (
+              <View key={t.id} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 }}>
+                <ThemedText>{t.title}</ThemedText>
+                <ThemedText style={{ fontWeight: '600' }}>{t.type === 'expense' ? '-' : '+'} {formatCurrency(t.amount)}</ThemedText>
+              </View>
+            ))
+          )}
+        </Card>
+      </ScrollView>
+    </ThemedView>
   );
 }
 
@@ -87,6 +67,18 @@ const styles = StyleSheet.create({
   stepContainer: {
     gap: 8,
     marginBottom: 8,
+  },
+  container: {
+    padding: 12,
+    gap: 12,
+  },
+  balanceCard: {
+    backgroundColor: 'transparent',
+  },
+  actionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
   },
   reactLogo: {
     height: 178,
