@@ -27,7 +27,7 @@ export function TransactionItem({ item, onEdit, onDelete }: Props) {
       <Card style={[styles.row, expanded ? styles.expanded : undefined]}>
         <View style={styles.left}>
           <ThemedText type="defaultSemiBold">{item.title}</ThemedText>
-          <ThemedText>{new Date(item.date).toLocaleDateString()}</ThemedText>
+          <ThemedText>{new Date(item.date).toLocaleDateString('pt-BR')}</ThemedText>
           {expanded ? (
             <View style={styles.details}>
               <ThemedText>Categoria: {item.category ?? '—'}</ThemedText>

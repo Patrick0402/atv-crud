@@ -19,13 +19,16 @@ export default function TransactionsScreen() {
   const textColor = useThemeColor({}, 'text');
   const iconColor = useThemeColor({}, 'icon');
   const bg = useThemeColor({}, 'background');
-  const [filtersOpen, setFiltersOpen] = useState(true);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   // filters (draft inputs)
   const [titleFilter, setTitleFilter] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [notesFilter, setNotesFilter] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  // web-specific input strings (DD/MM/YYYY) for nicer UX
+  const [webDateFromInput, setWebDateFromInput] = useState('');
+  const [webDateToInput, setWebDateToInput] = useState('');
   // applied filters (used by the list)
   const [appliedTitle, setAppliedTitle] = useState('');
   const [appliedCategory, setAppliedCategory] = useState('');
@@ -36,6 +39,7 @@ export default function TransactionsScreen() {
   const [showToPicker, setShowToPicker] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editing, setEditing] = useState<Transaction | undefined>(undefined);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   async function load() {
     const txs = await getTransactions();
@@ -71,6 +75,23 @@ export default function TransactionsScreen() {
       return true;
     });
   }, [transactions, appliedTitle, appliedCategory, appliedNotes, appliedFrom, appliedTo]);
+
+  // keep web inputs in sync with ISO date strings
+  useEffect(() => {
+    setWebDateFromInput(dateFrom ? new Date(dateFrom).toLocaleDateString('pt-BR') : '');
+  }, [dateFrom]);
+  useEffect(() => {
+    setWebDateToInput(dateTo ? new Date(dateTo).toLocaleDateString('pt-BR') : '');
+  }, [dateTo]);
+
+  function parseDDMMYYYY(v: string) {
+    const m = v.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (!m) return '';
+    const [, dd, mm, yyyy] = m;
+    const d = new Date(Number(yyyy), Number(mm) - 1, Number(dd));
+    if (isNaN(d.getTime())) return '';
+    return d.toISOString();
+  }
 
   async function handleAdd(payload: Omit<Transaction, 'id'>) {
     await addTransaction(payload);
@@ -108,16 +129,24 @@ export default function TransactionsScreen() {
             <View style={styles.filterRow}>
               {Platform.OS === 'web' ? (
                 <>
-                  <TextInput placeholder="De (YYYY-MM-DD)" placeholderTextColor={iconColor} value={dateFrom} onChangeText={setDateFrom} style={[styles.filterInput, { flex: 1, color: textColor, borderColor: iconColor, backgroundColor: bg }]} />
-                  <TextInput placeholder="Até (YYYY-MM-DD)" placeholderTextColor={iconColor} value={dateTo} onChangeText={setDateTo} style={[styles.filterInput, { flex: 1, color: textColor, borderColor: iconColor, backgroundColor: bg }]} />
+                  <TextInput placeholder="De (DD/MM/YYYY)" placeholderTextColor={iconColor} value={webDateFromInput} onChangeText={(v) => {
+                    setWebDateFromInput(v);
+                    const iso = parseDDMMYYYY(v);
+                    setDateFrom(iso);
+                  }} style={[styles.filterInput, { flex: 1, color: textColor, borderColor: iconColor, backgroundColor: bg }]} />
+                  <TextInput placeholder="Até (DD/MM/YYYY)" placeholderTextColor={iconColor} value={webDateToInput} onChangeText={(v) => {
+                    setWebDateToInput(v);
+                    const iso = parseDDMMYYYY(v);
+                    setDateTo(iso);
+                  }} style={[styles.filterInput, { flex: 1, color: textColor, borderColor: iconColor, backgroundColor: bg }]} />
                 </>
               ) : (
                 <>
                   <Pressable onPress={() => setShowFromPicker(true)} style={[styles.filterInput, { flex: 1, justifyContent: 'center', borderColor: iconColor, backgroundColor: bg }] as any}>
-                    <Text style={{ color: dateFrom ? textColor : iconColor }}>{dateFrom ? new Date(dateFrom).toLocaleDateString() : 'De'}</Text>
+                    <Text style={{ color: dateFrom ? textColor : iconColor }}>{dateFrom ? new Date(dateFrom).toLocaleDateString('pt-BR') : 'De'}</Text>
                   </Pressable>
                   <Pressable onPress={() => setShowToPicker(true)} style={[styles.filterInput, { flex: 1, justifyContent: 'center', borderColor: iconColor, backgroundColor: bg }] as any}>
-                    <Text style={{ color: dateTo ? textColor : iconColor }}>{dateTo ? new Date(dateTo).toLocaleDateString() : 'Até'}</Text>
+                    <Text style={{ color: dateTo ? textColor : iconColor }}>{dateTo ? new Date(dateTo).toLocaleDateString('pt-BR') : 'Até'}</Text>
                   </Pressable>
                 </>
               )}
@@ -165,6 +194,7 @@ export default function TransactionsScreen() {
       <FlatList
         data={filteredTransactions}
         keyExtractor={(i) => i.id}
+        contentContainerStyle={styles.listContent}
         renderItem={({ item }) => (
           <TransactionItem
             item={item}
@@ -172,7 +202,7 @@ export default function TransactionsScreen() {
               setEditing(t);
               setModalVisible(true);
             }}
-            onDelete={(id) => handleDelete(id)}
+            onDelete={(id) => setConfirmDeleteId(id)}
           />
         )}
         ListEmptyComponent={<Card><ThemedText>Nenhuma transação. Toque + para adicionar.</ThemedText></Card>}
@@ -199,6 +229,23 @@ export default function TransactionsScreen() {
             }}
           />
         </ThemedView>
+      </Modal>
+
+      <Modal visible={confirmDeleteId != null} transparent animationType="fade" onRequestClose={() => setConfirmDeleteId(null)}>
+        <View style={styles.confirmBackdrop}>
+          <Card style={[styles.confirmCard, { backgroundColor: bg }] }>
+            <ThemedText type="title">Confirmar exclusão</ThemedText>
+            <ThemedText>Tem certeza que deseja excluir esta transação?</ThemedText>
+            <View style={styles.confirmActions}>
+              <Button title="Cancelar" onPress={() => setConfirmDeleteId(null)} style={{ backgroundColor: '#ccc', marginRight: 8 }} />
+              <Button title="Excluir" onPress={async () => {
+                if (!confirmDeleteId) return;
+                await handleDelete(confirmDeleteId);
+                setConfirmDeleteId(null);
+              }} />
+            </View>
+          </Card>
+          </View>
       </Modal>
       </ThemedView>
     </ThemedView>
@@ -258,5 +305,25 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     gap: 8,
     marginTop: 6,
+  },
+  confirmBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  confirmCard: {
+    width: '100%',
+    maxWidth: 480,
+    padding: 12,
+  },
+  confirmActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: 12,
+  },
+  listContent: {
+    paddingBottom: 120,
   },
 });

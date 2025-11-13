@@ -37,6 +37,51 @@ export async function ensureTable(): Promise<void> {
     // eslint-disable-next-line no-console
     console.warn('Schema migration check failed', e);
   }
+
+  // Seed example data on first run (when table is empty)
+  try {
+    const rows = await db.getAllAsync<{ count: number }>(`SELECT COUNT(*) as count FROM ${TABLE};`);
+    const count = (rows && rows[0] && (rows[0] as any).count) || 0;
+    if (count === 0) {
+      // create 10 example transactions with varied categories and dates
+      const now = Date.now();
+      const sample: Array<Omit<Transaction, 'id'>> = [
+        { title: 'Salário', amount: 4500, type: 'income', date: new Date(now - 15 * 24 * 3600 * 1000).toISOString(), category: 'Renda', notes: 'Pagamento mensal' },
+        { title: 'Aluguel (fundos)', amount: 1200, type: 'income', date: new Date(now - 4 * 24 * 3600 * 1000).toISOString(), category: 'Renda', notes: 'Aluguel da casa dos fundos' },
+        { title: 'Despesa médica', amount: 800, type: 'expense', date: new Date(now - 20 * 24 * 3600 * 1000).toISOString(), category: 'Saúde', notes: 'Dentista' },
+        { title: 'Supermercado', amount: 230.5, type: 'expense', date: new Date(now - 12 * 24 * 3600 * 1000).toISOString(), category: 'Alimentação', notes: 'Compras semanais' },
+        { title: 'Pipoca e ingresso', amount: 40, type: 'expense', date: new Date(now - 7 * 24 * 3600 * 1000).toISOString(), category: 'Lazer', notes: 'Cinema' },
+        { title: 'Fliperama', amount: 30, type: 'expense', date: new Date(now - 8 * 24 * 3600 * 1000).toISOString(), category: 'Lazer', notes: 'Jogos' },
+        { title: 'Vendas mensais', amount: 180, type: 'income', date: new Date(now - 1 * 24 * 3600 * 1000).toISOString(), category: 'Pequeno Negócio', notes: 'Venda da lojinha de artesanato' },
+        { title: 'Hotel', amount: 420, type: 'expense', date: new Date(now - 2 * 24 * 3600 * 1000).toISOString(), category: 'Viagem', notes: 'Férias' },
+        { title: 'Compra de material', amount: 130, type: 'expense', date: new Date(now - 14 * 24 * 3600 * 1000).toISOString(), category: 'Pequeno Negócio', notes: 'Material para artesanato' },
+        { title: 'Academia', amount: 80, type: 'expense', date: new Date(now - 10 * 24 * 3600 * 1000).toISOString(), category: 'Serviços', notes: 'Pagamento mensal da academia' },
+      ];
+
+      for (let i = 0; i < sample.length; i++) {
+        const s = sample[i];
+        const id = String(Date.now() + i);
+        await db.runAsync(
+          `INSERT INTO ${TABLE} (id, title, amount, type, date, category, notes) VALUES ($id, $title, $amount, $type, $date, $category, $notes);`,
+          {
+            $id: id,
+            $title: s.title,
+            $amount: s.amount,
+            $type: s.type ?? 'income',
+            $date: s.date,
+            $category: s.category ?? null,
+            $notes: s.notes ?? null,
+          }
+        );
+      }
+      try {
+        publish('transactions:changed');
+      } catch {}
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('Seeding check failed', e);
+  }
 }
 
 export async function getTransactions(): Promise<Transaction[]> {
