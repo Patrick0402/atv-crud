@@ -9,19 +9,35 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { formatCurrency } from '@/lib/format';
 import { subscribe } from '@/lib/pubsub';
+import { getCurrentUserId, setCurrentUserId } from '@/lib/session';
 import { getTransactions } from '@/lib/transactions';
+import { getUserById } from '@/lib/users';
 import { Transaction } from '@/types/transaction';
 // Link not used on Home anymore
 
 export default function HomeScreen() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [userName, setUserName] = useState<string | null>(null);
   const router = useRouter();
   const animatedValue = useRef(new Animated.Value(0)).current;
   const [displayBalance, setDisplayBalance] = useState(0);
 
   async function load() {
-    const txs = await getTransactions();
+    const uid = await getCurrentUserId();
+    if (!uid) {
+      // if no user is logged, redirect to login
+      router.replace('/login' as any);
+      return;
+    }
+    const txs = await getTransactions(uid);
     setTransactions(txs);
+    // load user name for greeting
+    try {
+      const u = await getUserById(uid);
+      setUserName(u?.name ?? null);
+    } catch {
+      setUserName(null);
+    }
   }
 
   useEffect(() => {
@@ -50,7 +66,22 @@ export default function HomeScreen() {
 
   return (
     <ThemedView style={{ flex: 1 }}>
-      <AppHeader title="Minha Carteira" />
+      <AppHeader
+        title={`Minha Carteira`}
+        right={
+          <Pressable onPress={async () => {
+            await setCurrentUserId(null);
+            router.replace('/login' as any);
+          }} style={{ padding: 8 }}>
+            <ThemedText type="defaultSemiBold">Sair</ThemedText>
+          </Pressable>
+        }
+      />
+      {userName ? (
+        <Card style={{ marginHorizontal: 12 }}>
+          <ThemedText>Olá, {userName}</ThemedText>
+        </Card>
+      ) : null}
       <ScrollView contentContainerStyle={styles.container}>
         <Card style={styles.balanceCard}>
           <ThemedText type="subtitle">Saldo Disponível</ThemedText>

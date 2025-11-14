@@ -7,13 +7,16 @@ import { TransactionForm } from '@/components/transaction-form';
 import { TransactionItem } from '@/components/transaction-item';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useThemeColor } from '@/hooks/use-theme-color';
+import { getCurrentUserId } from '@/lib/session';
 import { addTransaction, deleteTransaction, getTransactions, updateTransaction } from '@/lib/transactions';
 import { Transaction } from '@/types/transaction';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
 import { FlatList, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 export default function TransactionsScreen() {
+  const router = useRouter();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const tint = useThemeColor({}, 'tint');
   const textColor = useThemeColor({}, 'text');
@@ -42,7 +45,13 @@ export default function TransactionsScreen() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   async function load() {
-    const txs = await getTransactions();
+    const uid = await getCurrentUserId();
+    if (!uid) {
+      // no user - go to login
+      router.replace('/login' as any);
+      return;
+    }
+    const txs = await getTransactions(uid);
     setTransactions(txs);
   }
 
@@ -94,7 +103,8 @@ export default function TransactionsScreen() {
   }
 
   async function handleAdd(payload: Omit<Transaction, 'id'>) {
-    await addTransaction(payload);
+    const uid = await getCurrentUserId();
+    await addTransaction(payload, uid ?? undefined);
     setModalVisible(false);
     setEditing(undefined);
     load();

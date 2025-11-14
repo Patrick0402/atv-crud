@@ -6,4 +6,5 @@ export type Transaction = {
   date: string; // ISO date string
   category?: string;
   notes?: string;
+  userId?: string;
 };

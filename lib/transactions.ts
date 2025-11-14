@@ -2,6 +2,8 @@ import { Transaction } from '@/types/transaction';
 import { openDatabaseAsync, SQLiteDatabase } from 'expo-sqlite';
 import { publish } from './pubsub';
 
+import { getCurrentUserId } from './session';
+
 const DB_NAME = 'transactions.db';
 const TABLE = 'transactions';
 
@@ -15,6 +17,14 @@ async function getDb(): Promise<SQLiteDatabase> {
 
 export async function ensureTable(): Promise<void> {
   const db = await getDb();
+  // Ensure users table exists first so we can reference it via foreign key
+  await db.execAsync(`CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY NOT NULL,
+    name TEXT,
+    email TEXT UNIQUE,
+    password TEXT
+  );`);
+
   await db.execAsync(`CREATE TABLE IF NOT EXISTS ${TABLE} (
     id TEXT PRIMARY KEY NOT NULL,
     title TEXT,
@@ -22,7 +32,9 @@ export async function ensureTable(): Promise<void> {
     type TEXT,
     date TEXT,
     category TEXT,
-    notes TEXT
+    notes TEXT,
+    user_id TEXT,
+    FOREIGN KEY(user_id) REFERENCES users(id)
   );`);
 
   // Ensure schema migrations: if older table missing 'type' column, add it
@@ -31,6 +43,10 @@ export async function ensureTable(): Promise<void> {
     const hasType = info.some((c) => c.name === 'type');
     if (!hasType) {
       await db.execAsync(`ALTER TABLE ${TABLE} ADD COLUMN type TEXT;`);
+    }
+    const hasUser = info.some((c) => c.name === 'user_id');
+    if (!hasUser) {
+      await db.execAsync(`ALTER TABLE ${TABLE} ADD COLUMN user_id TEXT;`);
     }
   } catch (e) {
     // ignore migration errors but log to console
@@ -43,9 +59,30 @@ export async function ensureTable(): Promise<void> {
     const rows = await db.getAllAsync<{ count: number }>(`SELECT COUNT(*) as count FROM ${TABLE};`);
     const count = (rows && rows[0] && (rows[0] as any).count) || 0;
     if (count === 0) {
-      // create 10 example transactions with varied categories and dates
+      // Ensure a stable default user exists (pre-created) and seed transactions only for that user.
+      const DEFAULT_USER_ID = 'default-user';
+      const DEFAULT_USER_EMAIL = 'user@example.com';
+      const DEFAULT_USER_NAME = 'Usuário';
+      const DEFAULT_USER_PASSWORD = 'user123';
+
+      // check if a user with the default email exists
+      const urows = await db.getAllAsync<{ id: string }>(`SELECT id FROM users WHERE lower(email) = $email LIMIT 1;`, { $email: DEFAULT_USER_EMAIL.toLowerCase() });
+      let demoUserId = DEFAULT_USER_ID;
+      if (!urows || urows.length === 0) {
+        // create the default user
+        await db.runAsync(`INSERT OR REPLACE INTO users (id, name, email, password) VALUES ($id, $name, $email, $password);`, {
+          $id: demoUserId,
+          $name: DEFAULT_USER_NAME,
+          $email: DEFAULT_USER_EMAIL,
+          $password: DEFAULT_USER_PASSWORD,
+        });
+      } else {
+        demoUserId = (urows[0] as any).id || demoUserId;
+      }
+
+      // create 10 example transactions with varied categories and dates assigned to demoUserId
       const now = Date.now();
-      const sample: Array<Omit<Transaction, 'id'>> = [
+      const sample: Array<Omit<Transaction, 'id' | 'userId'>> = [
         { title: 'Salário', amount: 4500, type: 'income', date: new Date(now - 15 * 24 * 3600 * 1000).toISOString(), category: 'Renda', notes: 'Pagamento mensal' },
         { title: 'Aluguel (fundos)', amount: 1200, type: 'income', date: new Date(now - 4 * 24 * 3600 * 1000).toISOString(), category: 'Renda', notes: 'Aluguel da casa dos fundos' },
         { title: 'Despesa médica', amount: 800, type: 'expense', date: new Date(now - 20 * 24 * 3600 * 1000).toISOString(), category: 'Saúde', notes: 'Dentista' },
@@ -62,7 +99,7 @@ export async function ensureTable(): Promise<void> {
         const s = sample[i];
         const id = String(Date.now() + i);
         await db.runAsync(
-          `INSERT INTO ${TABLE} (id, title, amount, type, date, category, notes) VALUES ($id, $title, $amount, $type, $date, $category, $notes);`,
+          `INSERT INTO ${TABLE} (id, title, amount, type, date, category, notes, user_id) VALUES ($id, $title, $amount, $type, $date, $category, $notes, $user_id);`,
           {
             $id: id,
             $title: s.title,
@@ -71,6 +108,7 @@ export async function ensureTable(): Promise<void> {
             $date: s.date,
             $category: s.category ?? null,
             $notes: s.notes ?? null,
+            $user_id: demoUserId,
           }
         );
       }
@@ -84,19 +122,36 @@ export async function ensureTable(): Promise<void> {
   }
 }
 
-export async function getTransactions(): Promise<Transaction[]> {
+export async function getTransactions(userId?: string): Promise<Transaction[]> {
   await ensureTable();
   const db = await getDb();
+  // if no userId provided, try to resolve current session
+  let uid = userId;
+  if (!uid) {
+    try {
+      uid = (await getCurrentUserId()) ?? undefined;
+    } catch {}
+  }
+  if (uid) {
+    const rows = await db.getAllAsync<Transaction>(`SELECT * FROM ${TABLE} WHERE user_id = $uid ORDER BY date DESC;`, { $uid: uid });
+    return rows || [];
+  }
   const rows = await db.getAllAsync<Transaction>(`SELECT * FROM ${TABLE} ORDER BY date DESC;`);
   return rows || [];
 }
 
-export async function addTransaction(t: Omit<Transaction, 'id'> | Transaction): Promise<Transaction> {
+export async function addTransaction(t: Omit<Transaction, 'id'> | Transaction, userId?: string): Promise<Transaction> {
   await ensureTable();
   const db = await getDb();
   const payload = t as Transaction;
   const id = payload.id ?? Date.now().toString();
-  const params = {
+  let uid = userId;
+  if (!uid) {
+    try {
+      uid = (await getCurrentUserId()) ?? undefined;
+    } catch {}
+  }
+  const params: Record<string, any> = {
     $id: id,
     $title: payload.title ?? 'Untitled',
     $amount: typeof payload.amount === 'number' ? payload.amount : Number(payload.amount) || 0,
@@ -104,22 +159,23 @@ export async function addTransaction(t: Omit<Transaction, 'id'> | Transaction): 
     $date: payload.date ?? new Date().toISOString(),
     $category: payload.category ?? null,
     $notes: payload.notes ?? null,
+    $user_id: uid ?? null,
   };
   await db.runAsync(
-    `INSERT OR REPLACE INTO ${TABLE} (id, title, amount, type, date, category, notes) VALUES ($id, $title, $amount, $type, $date, $category, $notes);`,
+    `INSERT OR REPLACE INTO ${TABLE} (id, title, amount, type, date, category, notes, user_id) VALUES ($id, $title, $amount, $type, $date, $category, $notes, $user_id);`,
     params
   );
   try {
     publish('transactions:changed');
   } catch {}
-  return { ...(payload as any), id } as Transaction;
+  return { ...(payload as any), id, userId: uid } as Transaction;
 }
 
 export async function updateTransaction(updated: Transaction): Promise<void> {
   await ensureTable();
   const db = await getDb();
   await db.runAsync(
-    `UPDATE ${TABLE} SET title = $title, amount = $amount, type = $type, date = $date, category = $category, notes = $notes WHERE id = $id;`,
+    `UPDATE ${TABLE} SET title = $title, amount = $amount, type = $type, date = $date, category = $category, notes = $notes, user_id = $user_id WHERE id = $id;`,
     {
       $title: updated.title,
       $amount: updated.amount,
@@ -127,6 +183,7 @@ export async function updateTransaction(updated: Transaction): Promise<void> {
       $date: updated.date,
       $category: updated.category ?? null,
       $notes: updated.notes ?? null,
+      $user_id: (updated as any).userId ?? null,
       $id: updated.id,
     }
   );
