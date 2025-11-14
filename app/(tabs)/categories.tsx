@@ -94,19 +94,23 @@ export default function CategoriesScreen() {
     if (!uid) return;
     const value = name.trim();
     if (!value) return;
-    if (editing) {
-      await updateCategory({ ...editing, name: value });
-    } else {
-      // create
-      const id = String(Date.now()) + Math.random().toString(36).slice(2, 8);
-      await createCategory({ id, name: value, userId: uid });
+    try {
+      if (editing) {
+        await updateCategory({ ...editing, name: value });
+      } else {
+        // create
+        const id = String(Date.now()) + Math.random().toString(36).slice(2, 8);
+        await createCategory({ id, name: value, userId: uid });
+      }
+      setModalVisible(false);
+      setEditing(null);
+      setName("");
+      publish("categories:changed");
+      // categories affect transaction displays, ask transactions/home to refresh
+      publish("transactions:changed");
+    } catch (e: any) {
+      Alert.alert("Erro", e?.message ?? "Não foi possível salvar a categoria.");
     }
-    setModalVisible(false);
-    setEditing(null);
-    setName("");
-    publish("categories:changed");
-    // categories affect transaction displays, ask transactions/home to refresh
-    publish("transactions:changed");
   }
 
   async function handleDelete(id: string) {

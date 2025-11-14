@@ -43,6 +43,14 @@ export async function getCategories(userId: string): Promise<Category[]> {
 export async function createCategory(c: { id: string; name: string; userId: string }): Promise<void> {
   await ensureCategoriesTable();
   const db = await getDb();
+  // prevent duplicate category names for the same user (case-insensitive)
+  const existing = await db.getAllAsync<{ id: string }>(
+    `SELECT id FROM ${TABLE} WHERE lower(name) = $name AND user_id = $uid LIMIT 1;`,
+    { $name: String(c.name ?? '').trim().toLowerCase(), $uid: c.userId }
+  );
+  if (existing && existing.length > 0) {
+    throw new Error('Já existe uma categoria com esse nome para este usuário.');
+  }
   await db.runAsync(`INSERT OR REPLACE INTO ${TABLE} (id, name, user_id) VALUES ($id, $name, $user_id);`, {
     $id: c.id,
     $name: c.name,
@@ -73,6 +81,15 @@ export async function getOrCreateCategoryByName(name: string, userId: string): P
 export async function updateCategory(c: Category): Promise<void> {
   await ensureCategoriesTable();
   const db = await getDb();
+  // prevent renaming to a name that already exists for the same user (case-insensitive)
+  const rows = await db.getAllAsync<{ id: string }>(
+    `SELECT id FROM ${TABLE} WHERE lower(name) = $name AND user_id = $uid AND id != $id LIMIT 1;`,
+    { $name: String(c.name ?? '').trim().toLowerCase(), $uid: c.userId, $id: c.id }
+  );
+  if (rows && rows.length > 0) {
+    throw new Error('Já existe uma categoria com esse nome para este usuário.');
+  }
+
   await db.runAsync(`UPDATE ${TABLE} SET name = $name WHERE id = $id;`, { $name: c.name, $id: c.id });
 }
 
