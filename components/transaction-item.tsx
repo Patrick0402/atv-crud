@@ -10,9 +10,10 @@ type Props = {
   item: Transaction;
   onEdit: (t: Transaction) => void;
   onDelete: (id: string) => void;
+  categoryName?: string | null;
 };
 
-export function TransactionItem({ item, onEdit, onDelete }: Props) {
+export function TransactionItem({ item, onEdit, onDelete, categoryName }: Props) {
   const [expanded, setExpanded] = useState(false);
   // LayoutAnimation is used on press to animate expand/collapse.
   // On modern RN new-architecture the experimental enable call is a no-op
@@ -30,7 +31,7 @@ export function TransactionItem({ item, onEdit, onDelete }: Props) {
           <ThemedText>{new Date(item.date).toLocaleDateString('pt-BR')}</ThemedText>
           {expanded ? (
             <View style={styles.details}>
-              <ThemedText>Categoria: {item.category ?? '—'}</ThemedText>
+              <ThemedText>Categoria: {categoryName ?? (item as any).category ?? '—'}</ThemedText>
               <ThemedText>Notas: {item.notes ?? '—'}</ThemedText>
             </View>
           ) : null}

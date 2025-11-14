@@ -8,6 +8,9 @@ let dbInstance: SQLiteDatabase | null = null;
 async function getDb(): Promise<SQLiteDatabase> {
   if (dbInstance) return dbInstance;
   dbInstance = await openDatabaseAsync(DB_NAME);
+  try {
+    await dbInstance.execAsync('PRAGMA foreign_keys = ON;');
+  } catch {}
   return dbInstance;
 }
 

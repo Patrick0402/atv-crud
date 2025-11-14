@@ -1,69 +1,115 @@
-import { AppHeader } from '@/components/app-header';
-import { Button } from '@/components/button';
-import { Card } from '@/components/card';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { TransactionForm } from '@/components/transaction-form';
-import { TransactionItem } from '@/components/transaction-item';
-import { IconSymbol } from '@/components/ui/icon-symbol';
-import { useThemeColor } from '@/hooks/use-theme-color';
-import { getCurrentUserId } from '@/lib/session';
-import { addTransaction, deleteTransaction, getTransactions, updateTransaction } from '@/lib/transactions';
-import { Transaction } from '@/types/transaction';
-import DateTimePicker from '@react-native-community/datetimepicker';
-import { useRouter } from 'expo-router';
-import React, { useEffect, useMemo, useState } from 'react';
-import { FlatList, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { AppHeader } from "@/components/app-header";
+import { Button } from "@/components/button";
+import { Card } from "@/components/card";
+import { ThemedText } from "@/components/themed-text";
+import { ThemedView } from "@/components/themed-view";
+import { TransactionForm } from "@/components/transaction-form";
+import { TransactionItem } from "@/components/transaction-item";
+import { IconSymbol } from "@/components/ui/icon-symbol";
+import { useThemeColor } from "@/hooks/use-theme-color";
+import { getCategories, getOrCreateCategoryByName } from "@/lib/categories";
+import { subscribe } from "@/lib/pubsub";
+import { getCurrentUserId } from "@/lib/session";
+import {
+  addTransaction,
+  deleteTransaction,
+  getTransactions,
+  updateTransaction,
+} from "@/lib/transactions";
+import { Category } from "@/types/category";
+import { Transaction } from "@/types/transaction";
+import DateTimePicker from "@react-native-community/datetimepicker";
+import { useRouter } from "expo-router";
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  Alert,
+  FlatList,
+  Modal,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 
 export default function TransactionsScreen() {
   const router = useRouter();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const tint = useThemeColor({}, 'tint');
-  const textColor = useThemeColor({}, 'text');
-  const iconColor = useThemeColor({}, 'icon');
-  const bg = useThemeColor({}, 'background');
+  const tint = useThemeColor({}, "tint");
+  const textColor = useThemeColor({}, "text");
+  const iconColor = useThemeColor({}, "icon");
+  const bg = useThemeColor({}, "background");
   const [filtersOpen, setFiltersOpen] = useState(false);
   // filters (draft inputs)
-  const [titleFilter, setTitleFilter] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState('');
-  const [notesFilter, setNotesFilter] = useState('');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const [titleFilter, setTitleFilter] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [categorySelectOpen, setCategorySelectOpen] = useState(false);
+  const [categoryQuery, setCategoryQuery] = useState("");
+  const [notesFilter, setNotesFilter] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   // web-specific input strings (DD/MM/YYYY) for nicer UX
-  const [webDateFromInput, setWebDateFromInput] = useState('');
-  const [webDateToInput, setWebDateToInput] = useState('');
+  const [webDateFromInput, setWebDateFromInput] = useState("");
+  const [webDateToInput, setWebDateToInput] = useState("");
   // applied filters (used by the list)
-  const [appliedTitle, setAppliedTitle] = useState('');
-  const [appliedCategory, setAppliedCategory] = useState('');
-  const [appliedNotes, setAppliedNotes] = useState('');
-  const [appliedFrom, setAppliedFrom] = useState('');
-  const [appliedTo, setAppliedTo] = useState('');
+  const [appliedTitle, setAppliedTitle] = useState("");
+  const [appliedCategory, setAppliedCategory] = useState("");
+  const [appliedNotes, setAppliedNotes] = useState("");
+  const [appliedFrom, setAppliedFrom] = useState("");
+  const [appliedTo, setAppliedTo] = useState("");
   const [showFromPicker, setShowFromPicker] = useState(false);
   const [showToPicker, setShowToPicker] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editing, setEditing] = useState<Transaction | undefined>(undefined);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [categories, setCategories] = useState<Category[]>([]);
 
   async function load() {
     const uid = await getCurrentUserId();
     if (!uid) {
       // no user - go to login
-      router.replace('/login' as any);
+      router.replace("/login" as any);
       return;
     }
     const txs = await getTransactions(uid);
+    const cats = await getCategories(uid);
+    setCategories(cats);
     setTransactions(txs);
   }
 
   useEffect(() => {
     load();
+    const unsubTx = subscribe("transactions:changed", () => load());
+    const unsubCats = subscribe("categories:changed", () => load());
+    return () => {
+      try {
+        unsubTx();
+      } catch {}
+      try {
+        unsubCats();
+      } catch {}
+    };
   }, []);
 
   const filteredTransactions = useMemo(() => {
     return transactions.filter((t) => {
-      if (appliedTitle && !t.title.toLowerCase().includes(appliedTitle.toLowerCase())) return false;
-      if (appliedCategory && !(t.category ?? '').toLowerCase().includes(appliedCategory.toLowerCase())) return false;
-      if (appliedNotes && !(t.notes ?? '').toLowerCase().includes(appliedNotes.toLowerCase())) return false;
+      if (
+        appliedTitle &&
+        !t.title.toLowerCase().includes(appliedTitle.toLowerCase())
+      )
+        return false;
+      if (appliedCategory) {
+        // resolve category name from id
+        const cat = categories.find((c) => c.id === t.categoryId);
+        const name = cat ? cat.name : "";
+        if (!name.toLowerCase().includes(appliedCategory.toLowerCase()))
+          return false;
+      }
+      if (
+        appliedNotes &&
+        !(t.notes ?? "").toLowerCase().includes(appliedNotes.toLowerCase())
+      )
+        return false;
 
       // date range: make the comparison inclusive by using start of day / end of day
       if (appliedFrom) {
@@ -83,26 +129,37 @@ export default function TransactionsScreen() {
 
       return true;
     });
-  }, [transactions, appliedTitle, appliedCategory, appliedNotes, appliedFrom, appliedTo]);
+  }, [
+    transactions,
+    appliedTitle,
+    appliedCategory,
+    appliedNotes,
+    appliedFrom,
+    appliedTo,
+  ]);
 
   // keep web inputs in sync with ISO date strings
   useEffect(() => {
-    setWebDateFromInput(dateFrom ? new Date(dateFrom).toLocaleDateString('pt-BR') : '');
+    setWebDateFromInput(
+      dateFrom ? new Date(dateFrom).toLocaleDateString("pt-BR") : ""
+    );
   }, [dateFrom]);
   useEffect(() => {
-    setWebDateToInput(dateTo ? new Date(dateTo).toLocaleDateString('pt-BR') : '');
+    setWebDateToInput(
+      dateTo ? new Date(dateTo).toLocaleDateString("pt-BR") : ""
+    );
   }, [dateTo]);
 
   function parseDDMMYYYY(v: string) {
     const m = v.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-    if (!m) return '';
+    if (!m) return "";
     const [, dd, mm, yyyy] = m;
     const d = new Date(Number(yyyy), Number(mm) - 1, Number(dd));
-    if (isNaN(d.getTime())) return '';
+    if (isNaN(d.getTime())) return "";
     return d.toISOString();
   }
 
-  async function handleAdd(payload: Omit<Transaction, 'id'>) {
+  async function handleAdd(payload: Omit<Transaction, "id">) {
     const uid = await getCurrentUserId();
     await addTransaction(payload, uid ?? undefined);
     setModalVisible(false);
@@ -122,141 +179,404 @@ export default function TransactionsScreen() {
     load();
   }
 
+  function confirmDeleteTransaction(id: string) {
+    Alert.alert(
+      "Confirmar exclusão",
+      "Tem certeza que deseja excluir esta transação?",
+      [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Excluir",
+          style: "destructive",
+          onPress: async () => {
+            await handleDelete(id);
+          },
+        },
+      ]
+    );
+  }
+
   return (
     <ThemedView style={{ flex: 1 }}>
       <AppHeader title="Transações" />
       <ThemedView style={styles.container}>
-      <Card style={[styles.filterCard, { backgroundColor: bg, borderColor: iconColor }]}>
-        <Pressable style={styles.filterHeader} onPress={() => setFiltersOpen((s) => !s)}>
-          <ThemedText type="defaultSemiBold">Filtros</ThemedText>
-          <IconSymbol name="chevron.right" size={18} color={iconColor} style={{ transform: [{ rotate: filtersOpen ? '90deg' : '0deg' }] }} />
-        </Pressable>
-        {filtersOpen ? (
-          <View style={styles.filterBody}>
-            <TextInput placeholder="Título" placeholderTextColor={iconColor} value={titleFilter} onChangeText={setTitleFilter} style={[styles.filterInput, { color: textColor, borderColor: iconColor, backgroundColor: bg }]} />
-            <TextInput placeholder="Categoria" placeholderTextColor={iconColor} value={categoryFilter} onChangeText={setCategoryFilter} style={[styles.filterInput, { color: textColor, borderColor: iconColor, backgroundColor: bg }]} />
-            <TextInput placeholder="Notas" placeholderTextColor={iconColor} value={notesFilter} onChangeText={setNotesFilter} style={[styles.filterInput, { color: textColor, borderColor: iconColor, backgroundColor: bg }]} />
-            <View style={styles.filterRow}>
-              {Platform.OS === 'web' ? (
-                <>
-                  <TextInput placeholder="De (DD/MM/YYYY)" placeholderTextColor={iconColor} value={webDateFromInput} onChangeText={(v) => {
-                    setWebDateFromInput(v);
-                    const iso = parseDDMMYYYY(v);
-                    setDateFrom(iso);
-                  }} style={[styles.filterInput, { flex: 1, color: textColor, borderColor: iconColor, backgroundColor: bg }]} />
-                  <TextInput placeholder="Até (DD/MM/YYYY)" placeholderTextColor={iconColor} value={webDateToInput} onChangeText={(v) => {
-                    setWebDateToInput(v);
-                    const iso = parseDDMMYYYY(v);
-                    setDateTo(iso);
-                  }} style={[styles.filterInput, { flex: 1, color: textColor, borderColor: iconColor, backgroundColor: bg }]} />
-                </>
-              ) : (
-                <>
-                  <Pressable onPress={() => setShowFromPicker(true)} style={[styles.filterInput, { flex: 1, justifyContent: 'center', borderColor: iconColor, backgroundColor: bg }] as any}>
-                    <Text style={{ color: dateFrom ? textColor : iconColor }}>{dateFrom ? new Date(dateFrom).toLocaleDateString('pt-BR') : 'De'}</Text>
-                  </Pressable>
-                  <Pressable onPress={() => setShowToPicker(true)} style={[styles.filterInput, { flex: 1, justifyContent: 'center', borderColor: iconColor, backgroundColor: bg }] as any}>
-                    <Text style={{ color: dateTo ? textColor : iconColor }}>{dateTo ? new Date(dateTo).toLocaleDateString('pt-BR') : 'Até'}</Text>
-                  </Pressable>
-                </>
-              )}
-            </View>
-            {showFromPicker && Platform.OS !== 'web' ? (
-              <DateTimePicker
-                value={dateFrom ? new Date(dateFrom) : new Date()}
-                mode="date"
-                display="default"
-                onChange={(_e: any, selected: any) => {
-                  setShowFromPicker(false);
-                  if (selected) setDateFrom(new Date(selected).toISOString());
-                }}
+        <Card
+          style={[
+            styles.filterCard,
+            { backgroundColor: bg, borderColor: iconColor },
+          ]}
+        >
+          <Pressable
+            style={styles.filterHeader}
+            onPress={() => setFiltersOpen((s) => !s)}
+          >
+            <ThemedText type="defaultSemiBold">Filtros</ThemedText>
+            <IconSymbol
+              name="chevron.right"
+              size={18}
+              color={iconColor}
+              style={{
+                transform: [{ rotate: filtersOpen ? "90deg" : "0deg" }],
+              }}
+            />
+          </Pressable>
+          {filtersOpen ? (
+            <View style={styles.filterBody}>
+              <TextInput
+                placeholder="Título"
+                placeholderTextColor={iconColor}
+                value={titleFilter}
+                onChangeText={setTitleFilter}
+                style={[
+                  styles.filterInput,
+                  {
+                    color: textColor,
+                    borderColor: iconColor,
+                    backgroundColor: bg,
+                  },
+                ]}
               />
-            ) : null}
-            {showToPicker && Platform.OS !== 'web' ? (
-              <DateTimePicker
-                value={dateTo ? new Date(dateTo) : new Date()}
-                mode="date"
-                display="default"
-                onChange={(_e: any, selected: any) => {
-                  setShowToPicker(false);
-                  if (selected) setDateTo(new Date(selected).toISOString());
+              <Pressable
+                onPress={() => {
+                  setCategoryQuery(categoryFilter || "");
+                  setCategorySelectOpen(true);
                 }}
+                style={
+                  [
+                    styles.filterInput,
+                    {
+                      color: textColor,
+                      borderColor: iconColor,
+                      backgroundColor: bg,
+                      justifyContent: "center",
+                    },
+                  ] as any
+                }
+              >
+                <Text style={{ color: categoryFilter ? textColor : iconColor }}>
+                  {categoryFilter || "Categoria"}
+                </Text>
+              </Pressable>
+              <TextInput
+                placeholder="Notas"
+                placeholderTextColor={iconColor}
+                value={notesFilter}
+                onChangeText={setNotesFilter}
+                style={[
+                  styles.filterInput,
+                  {
+                    color: textColor,
+                    borderColor: iconColor,
+                    backgroundColor: bg,
+                  },
+                ]}
               />
-            ) : null}
-            <View style={styles.filterActions}>
-              <Button title="Reset" onPress={() => {
-                // clear drafts and applied filters
-                setTitleFilter(''); setCategoryFilter(''); setNotesFilter(''); setDateFrom(''); setDateTo('');
-                setAppliedTitle(''); setAppliedCategory(''); setAppliedNotes(''); setAppliedFrom(''); setAppliedTo('');
-              }} style={{ backgroundColor: '#ccc' }} />
-              <Button title="Aplicar" onPress={() => {
-                // apply current draft inputs
-                setAppliedTitle(titleFilter);
-                setAppliedCategory(categoryFilter);
-                setAppliedNotes(notesFilter);
-                setAppliedFrom(dateFrom);
-                setAppliedTo(dateTo);
-              }} />
+              <View style={styles.filterRow}>
+                {Platform.OS === "web" ? (
+                  <>
+                    <TextInput
+                      placeholder="De (DD/MM/YYYY)"
+                      placeholderTextColor={iconColor}
+                      value={webDateFromInput}
+                      onChangeText={(v) => {
+                        setWebDateFromInput(v);
+                        const iso = parseDDMMYYYY(v);
+                        setDateFrom(iso);
+                      }}
+                      style={[
+                        styles.filterInput,
+                        {
+                          flex: 1,
+                          color: textColor,
+                          borderColor: iconColor,
+                          backgroundColor: bg,
+                        },
+                      ]}
+                    />
+                    <TextInput
+                      placeholder="Até (DD/MM/YYYY)"
+                      placeholderTextColor={iconColor}
+                      value={webDateToInput}
+                      onChangeText={(v) => {
+                        setWebDateToInput(v);
+                        const iso = parseDDMMYYYY(v);
+                        setDateTo(iso);
+                      }}
+                      style={[
+                        styles.filterInput,
+                        {
+                          flex: 1,
+                          color: textColor,
+                          borderColor: iconColor,
+                          backgroundColor: bg,
+                        },
+                      ]}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <Pressable
+                      onPress={() => setShowFromPicker(true)}
+                      style={
+                        [
+                          styles.filterInput,
+                          {
+                            flex: 1,
+                            justifyContent: "center",
+                            borderColor: iconColor,
+                            backgroundColor: bg,
+                          },
+                        ] as any
+                      }
+                    >
+                      <Text style={{ color: dateFrom ? textColor : iconColor }}>
+                        {dateFrom
+                          ? new Date(dateFrom).toLocaleDateString("pt-BR")
+                          : "De"}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => setShowToPicker(true)}
+                      style={
+                        [
+                          styles.filterInput,
+                          {
+                            flex: 1,
+                            justifyContent: "center",
+                            borderColor: iconColor,
+                            backgroundColor: bg,
+                          },
+                        ] as any
+                      }
+                    >
+                      <Text style={{ color: dateTo ? textColor : iconColor }}>
+                        {dateTo
+                          ? new Date(dateTo).toLocaleDateString("pt-BR")
+                          : "Até"}
+                      </Text>
+                    </Pressable>
+                  </>
+                )}
+              </View>
+              {showFromPicker && Platform.OS !== "web" ? (
+                <DateTimePicker
+                  value={dateFrom ? new Date(dateFrom) : new Date()}
+                  mode="date"
+                  display="default"
+                  onChange={(_e: any, selected: any) => {
+                    setShowFromPicker(false);
+                    if (selected) setDateFrom(new Date(selected).toISOString());
+                  }}
+                />
+              ) : null}
+              {showToPicker && Platform.OS !== "web" ? (
+                <DateTimePicker
+                  value={dateTo ? new Date(dateTo) : new Date()}
+                  mode="date"
+                  display="default"
+                  onChange={(_e: any, selected: any) => {
+                    setShowToPicker(false);
+                    if (selected) setDateTo(new Date(selected).toISOString());
+                  }}
+                />
+              ) : null}
+              <View style={styles.filterActions}>
+                <Button
+                  title="Limpar"
+                  onPress={() => {
+                    // clear drafts and applied filters
+                    setTitleFilter("");
+                    setCategoryFilter("");
+                    setNotesFilter("");
+                    setDateFrom("");
+                    setDateTo("");
+                    setAppliedTitle("");
+                    setAppliedCategory("");
+                    setAppliedNotes("");
+                    setAppliedFrom("");
+                    setAppliedTo("");
+                  }}
+                  style={{ backgroundColor: "#ccc" }}
+                />
+                <Button
+                  title="Aplicar"
+                  onPress={() => {
+                    // apply current draft inputs
+                    setAppliedTitle(titleFilter);
+                    setAppliedCategory(categoryFilter);
+                    setAppliedNotes(notesFilter);
+                    setAppliedFrom(dateFrom);
+                    setAppliedTo(dateTo);
+                  }}
+                />
+              </View>
             </View>
-          </View>
-        ) : null}
-      </Card>
-      <FlatList
-        data={filteredTransactions}
-        keyExtractor={(i) => i.id}
-        contentContainerStyle={styles.listContent}
-        renderItem={({ item }) => (
-          <TransactionItem
-            item={item}
-            onEdit={(t) => {
-              setEditing(t);
-              setModalVisible(true);
-            }}
-            onDelete={(id) => setConfirmDeleteId(id)}
-          />
-        )}
-        ListEmptyComponent={<Card><ThemedText>Nenhuma transação. Toque + para adicionar.</ThemedText></Card>}
-      />
+          ) : null}
 
-      <Pressable style={styles.fab} onPress={() => setModalVisible(true)}>
-        <IconSymbol name="plus" size={20} color="#fff" />
-      </Pressable>
+          {/* Category select modal for filters */}
+          <Modal
+            visible={categorySelectOpen}
+            animationType="slide"
+            onRequestClose={() => setCategorySelectOpen(false)}
+          >
+            <ThemedView style={styles.modalContainer}>
+              <View style={styles.modalHeaderRow}>
+                <ThemedText
+                  type="title"
+                  style={[
+                    styles.modalTitle,
+                    { padding: 10, marginVertical: 5 },
+                  ]}
+                >
+                  Selecionar categoria
+                </ThemedText>
+                <Pressable
+                  onPress={() => setCategorySelectOpen(false)}
+                  style={styles.modalCloseBtn}
+                >
+                  <Text style={{ color: tint, fontWeight: "600" }}>Fechar</Text>
+                </Pressable>
+              </View>
 
-      <Modal visible={modalVisible} animationType="slide" onRequestClose={() => setModalVisible(false)}>
-        <ThemedView style={styles.modalContainer}>
-          <TransactionForm
-            initial={editing}
-            onCancel={() => {
-              setModalVisible(false);
-              setEditing(undefined);
-            }}
-            onSave={async (payload) => {
-              if ((payload as Transaction).id) {
-                await handleUpdate(payload as Transaction);
-              } else {
-                await handleAdd(payload as Omit<Transaction, 'id'>);
+              <View
+                style={{ paddingHorizontal: 12, marginBottom: 8, marginTop: 8 }}
+              >
+                <TextInput
+                  placeholder="Buscar categorias"
+                  placeholderTextColor={iconColor}
+                  value={categoryQuery}
+                  onChangeText={setCategoryQuery}
+                  style={[
+                    styles.filterInput,
+                    styles.searchInput,
+                    {
+                      color: textColor,
+                      borderColor: iconColor,
+                      backgroundColor: bg,
+                    },
+                  ]}
+                />
+              </View>
+
+              <FlatList
+                data={categories.filter((c) =>
+                  c.name.toLowerCase().includes(categoryQuery.toLowerCase())
+                )}
+                keyExtractor={(c) => c.id}
+                renderItem={({ item }) => {
+                  const selected = item.name === categoryFilter;
+                  return (
+                    <Pressable
+                      onPress={() => {
+                        setCategoryFilter(item.name);
+                        setCategorySelectOpen(false);
+                      }}
+                      style={[
+                        styles.catItem,
+                        selected
+                          ? {
+                              borderLeftWidth: 4,
+                              borderLeftColor: tint,
+                              backgroundColor: bg,
+                            }
+                          : undefined,
+                      ]}
+                    >
+                      <Text style={{ color: textColor, fontSize: 16 }}>
+                        {item.name}
+                      </Text>
+                      {selected ? (
+                        <Text style={{ color: tint, fontSize: 18 }}>✓</Text>
+                      ) : null}
+                    </Pressable>
+                  );
+                }}
+                ListHeaderComponent={() => (
+                  <Pressable
+                    onPress={() => {
+                      setCategoryFilter("");
+                      setCategorySelectOpen(false);
+                    }}
+                    style={styles.catItem}
+                  >
+                    <Text style={{ fontWeight: "700", color: tint }}>
+                      Sem filtro
+                    </Text>
+                  </Pressable>
+                )}
+              />
+            </ThemedView>
+          </Modal>
+        </Card>
+        <FlatList
+          data={filteredTransactions}
+          keyExtractor={(i) => i.id}
+          contentContainerStyle={styles.listContent}
+          renderItem={({ item }) => (
+            <TransactionItem
+              item={item}
+              onEdit={(t) => {
+                setEditing({
+                  ...(t as any),
+                  categoryName: categories.find((c) => c.id === t.categoryId)
+                    ?.name,
+                });
+                setModalVisible(true);
+              }}
+              onDelete={(id) => confirmDeleteTransaction(id)}
+              categoryName={
+                categories.find((c) => c.id === item.categoryId)?.name ?? null
               }
-            }}
-          />
-        </ThemedView>
-      </Modal>
+            />
+          )}
+          ListEmptyComponent={
+            <Card>
+              <ThemedText>
+                Nenhuma transação. Toque + para adicionar.
+              </ThemedText>
+            </Card>
+          }
+        />
 
-      <Modal visible={confirmDeleteId != null} transparent animationType="fade" onRequestClose={() => setConfirmDeleteId(null)}>
-        <View style={styles.confirmBackdrop}>
-          <Card style={[styles.confirmCard, { backgroundColor: bg }] }>
-            <ThemedText type="title">Confirmar exclusão</ThemedText>
-            <ThemedText>Tem certeza que deseja excluir esta transação?</ThemedText>
-            <View style={styles.confirmActions}>
-              <Button title="Cancelar" onPress={() => setConfirmDeleteId(null)} style={{ backgroundColor: '#ccc', marginRight: 8 }} />
-              <Button title="Excluir" onPress={async () => {
-                if (!confirmDeleteId) return;
-                await handleDelete(confirmDeleteId);
-                setConfirmDeleteId(null);
-              }} />
-            </View>
-          </Card>
-          </View>
-      </Modal>
+        <Pressable style={styles.fab} onPress={() => setModalVisible(true)}>
+          <IconSymbol name="plus" size={20} color="#fff" />
+        </Pressable>
+
+        <Modal
+          visible={modalVisible}
+          animationType="slide"
+          onRequestClose={() => setModalVisible(false)}
+        >
+          <ThemedView style={styles.modalContainer}>
+            <TransactionForm
+              initial={editing}
+              currentUserId={undefined}
+              onCancel={() => {
+                setModalVisible(false);
+                setEditing(undefined);
+              }}
+              onSave={async (payload) => {
+                const p: any = { ...payload };
+                const uid = await getCurrentUserId();
+                if (p.categoryName && uid) {
+                  const cat = await getOrCreateCategoryByName(
+                    p.categoryName,
+                    uid
+                  );
+                  p.categoryId = cat.id;
+                  delete p.categoryName;
+                }
+                if (p.id) {
+                  await handleUpdate(p as Transaction);
+                } else {
+                  await handleAdd(p as Omit<Transaction, "id">);
+                }
+              }}
+            />
+          </ThemedView>
+        </Modal>
+
+        {/* confirmation now handled via Alert.alert */}
       </ThemedView>
     </ThemedView>
   );
@@ -269,15 +589,15 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   fab: {
-    position: 'absolute',
+    position: "absolute",
     right: 20,
     bottom: 24,
     width: 52,
     height: 52,
     borderRadius: 26,
-    backgroundColor: '#0a84ff',
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: "#0a84ff",
+    alignItems: "center",
+    justifyContent: "center",
     elevation: 4,
   },
   modalContainer: {
@@ -286,7 +606,7 @@ const styles = StyleSheet.create({
   },
   filterInput: {
     borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.08)',
+    borderColor: "rgba(0,0,0,0.08)",
     padding: 8,
     borderRadius: 6,
   },
@@ -297,9 +617,9 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   filterHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingVertical: 6,
   },
   filterBody: {
@@ -307,33 +627,59 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   filterRow: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 8,
   },
   filterActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
+    flexDirection: "row",
+    justifyContent: "flex-end",
     gap: 8,
     marginTop: 6,
   },
   confirmBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "center",
+    alignItems: "center",
     padding: 20,
   },
   confirmCard: {
-    width: '100%',
+    width: "100%",
     maxWidth: 480,
     padding: 12,
   },
   confirmActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
+    flexDirection: "row",
+    justifyContent: "flex-end",
     marginTop: 12,
   },
   listContent: {
     paddingBottom: 120,
+  },
+  modalHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  modalCloseBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  searchInput: {
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  modalTitle: {
+    flex: 1,
+    marginRight: 12,
+  },
+  catItem: {
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderColor: "rgba(0,0,0,0.04)",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
 });
